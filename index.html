@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<title>Medición de latencia</title>
+<style>
+/* Una columna para el teléfono: datos de la medición arriba, barras por destino, resultado para enviar. */
+:root {
+  --bg: #f6f7f9; --card: #ffffff; --fg: #17202b; --muted: #5b6676; --line: #dde2e8;
+  --accent: #1f5fbf; --good: #1e8a4c; --warn: #b7791f; --bad: #c0392b; --track: #e9edf2;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0f141a; --card: #171e26; --fg: #e8edf3; --muted: #9aa6b4; --line: #2a3440;
+          --accent: #6ea4ff; --good: #4cc27f; --warn: #e0a84a; --bad: #ef6b5e; --track: #232c37; color-scheme: dark; }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 16px/1.45 var(--sans); padding: env(safe-area-inset-top, 0px) 16px calc(24px + env(safe-area-inset-bottom, 0px)); }
+main { max-width: 560px; margin: 0 auto; display: grid; gap: 16px; padding-block: 16px; }
+h1 { font-size: 1.5rem; line-height: 1.2; margin: 0; text-wrap: balance; }
+p { margin: 0; }
+.lead { color: var(--muted); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 12px; }
+label { font-weight: 600; display: grid; gap: 6px; }
+select, input[type=text] { font: inherit; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); width: 100%; }
+.check { display: flex; gap: 10px; align-items: flex-start; font-weight: 400; }
+.check input { width: 22px; height: 22px; margin: 1px 0 0; flex: none; }
+button { font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 14px 16px; cursor: pointer; }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.primary { background: var(--accent); color: #fff; }
+.secondary { background: var(--track); color: var(--fg); }
+button:disabled { opacity: .5; cursor: default; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; }
+.row button { flex: 1 1 160px; }
+.note { font-size: .9rem; color: var(--muted); }
+.alert { font-size: .95rem; border-left: 4px solid var(--warn); padding: 8px 12px; background: var(--track); border-radius: 0 8px 8px 0; }
+.status { display: grid; gap: 8px; }
+.status strong { font-size: 1.1rem; }
+.progress { height: 8px; background: var(--track); border-radius: 4px; overflow: hidden; }
+.progress div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.done-badge { font-size: 1.6rem; font-weight: 700; color: var(--good); }
+.dest { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: baseline; padding-block: 6px; border-top: 1px solid var(--line); }
+.dest:first-child { border-top: 0; }
+.dest .name { font-weight: 600; min-width: 0; }
+.dest .val { font: 600 1rem var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+.dest .sub { grid-column: 1 / -1; font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bar { grid-column: 1 / -1; height: 6px; background: var(--track); border-radius: 3px; overflow: hidden; }
+.bar div { height: 100%; width: 0; border-radius: 3px; background: var(--good); transition: width .3s; }
+.bar div.warn { background: var(--warn); } .bar div.bad { background: var(--bad); }
+pre { font: .78rem/1.4 var(--mono); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow-x: auto; margin: 0; white-space: pre; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+  <header style="display:grid;gap:6px">
+    <h1>Medición de latencia desde el teléfono</h1>
+    <p class="lead">Mide cuánto tarda la red móvil en llegar a cada servidor candidato y a Odoo.sh. Deja esta página abierta y en pantalla hasta que diga «Listo».</p>
+  </header>
+
+  <section class="card" id="setup">
+    <label for="carrier">Operadora del teléfono
+      <select id="carrier">
+        <option value="">Elegir…</option>
+        <option>Movistar</option><option>Digitel</option><option>Movilnet</option><option>Otra</option>
+      </select>
+    </label>
+    <label for="place">Dónde estás (opcional)
+      <input type="text" id="place" placeholder="Ej.: oficina, casa, calle">
+    </label>
+    <label class="check" for="mobile"><input type="checkbox" id="mobile"> <span>Tengo el <b>Wi-Fi apagado</b> y uso <b>datos móviles</b>.</span></label>
+    <p class="alert" id="wifiWarn" hidden>El teléfono parece estar en Wi-Fi. Apágalo y recarga la página: queremos medir la red móvil.</p>
+    <button class="primary" id="start" disabled>Empezar</button>
+    <p class="note">Mientras mide, no bloquees la pantalla ni cambies de aplicación: el teléfono pausa las páginas en segundo plano.</p>
+  </section>
+
+  <section class="card" id="run" hidden>
+    <div class="status">
+      <strong id="statusText">Midiendo…</strong>
+      <div class="progress"><div id="progressBar"></div></div>
+      <span class="note" id="statusSub"></span>
+    </div>
+    <div id="dests"></div>
+  </section>
+
+  <section class="card" id="result" hidden>
+    <span class="done-badge">Listo</span>
+    <p>Envía el resultado a Manuel por WhatsApp. Si el botón no abre WhatsApp, usa «Copiar» y pégalo en el chat.</p>
+    <div class="row">
+      <button class="primary" id="share">Enviar</button>
+      <button class="secondary" id="copy">Copiar</button>
+    </div>
+    <p class="note" id="copied" hidden>Copiado. Pégalo en el chat con Manuel.</p>
+    <pre id="report"></pre>
+    <button class="secondary" id="again">Medir otra vez</button>
+  </section>
+</main>
+
+<script>
+"use strict";
+// Destinos: los mismos 10 del bloque de ping de la oficina + el Odoo actual.
+// Vultr y Odoo responden en /robots.txt. Hetzner solo en "/", sin parámetros (plain) y sin Referer;
+// además el navegador abre una conexión nueva en cada petición a Hetzner (fresh): su tiempo incluye abrirla.
+const DESTS = [
+  { name: "Vultr Miami",        url: "https://fl-us-ping.vultr.com/robots.txt" },
+  { name: "Vultr Atlanta",      url: "https://ga-us-ping.vultr.com/robots.txt" },
+  { name: "Vultr Nueva Jersey", url: "https://nj-us-ping.vultr.com/robots.txt" },
+  { name: "Vultr Fráncfort",    url: "https://fra-de-ping.vultr.com/robots.txt" },
+  { name: "Vultr Ciudad de México", url: "https://mex-mx-ping.vultr.com/robots.txt" },
+  { name: "Vultr São Paulo",    url: "https://sao-br-ping.vultr.com/robots.txt" },
+  { name: "Hetzner Ashburn",    url: "https://ash-speed.hetzner.com/", plain: true, fresh: true },
+  { name: "Hetzner Hillsboro",  url: "https://hil-speed.hetzner.com/", plain: true, fresh: true },
+  { name: "Hetzner Falkenstein", url: "https://fsn1-speed.hetzner.com/", plain: true, fresh: true },
+  { name: "Hetzner Núremberg",  url: "https://nbg1-speed.hetzner.com/", plain: true, fresh: true },
+  { name: "Odoo.sh actual (Iowa)", url: "https://nx-comercializadoramastres.odoo.com/robots.txt" },
+];
+const ROUNDS = 30;        // muestras por destino, además de la primera conexión
+const TIMEOUT_MS = 5000;  // más que esto cuenta como perdido
+
+const $ = (id) => document.getElementById(id);
+const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+
+function onWifi() { return conn && conn.type === "wifi"; }
+function refreshSetup() {
+  $("wifiWarn").hidden = !onWifi();
+  $("start").disabled = !($("carrier").value && $("mobile").checked);
+}
+["carrier", "mobile"].forEach((id) => $(id).addEventListener("change", refreshSetup));
+if (conn && conn.addEventListener) conn.addEventListener("change", refreshSetup);
+refreshSetup();
+
+// Una petición: el tiempo hasta recibir la respuesta completa. Con la conexión ya abierta equivale a un viaje de ida y vuelta.
+async function probe(url, plain) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+  const t0 = performance.now();
+  try {
+    const target = plain ? url : url + "?m=" + Math.random().toString(36).slice(2);
+    const r = await fetch(target, { mode: "no-cors", cache: "no-store", referrerPolicy: "no-referrer", signal: ctl.signal });
+    await r.arrayBuffer().catch(() => null);
+    return performance.now() - t0;
+  } catch (e) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function stats(xs) {
+  const ok = xs.filter((x) => x != null).sort((a, b) => a - b);
+  if (!ok.length) return null;
+  const q = (p) => ok[Math.min(ok.length - 1, Math.floor(p * ok.length))];
+  return { n: ok.length, lost: xs.length - ok.length, mean: ok.reduce((a, b) => a + b, 0) / ok.length,
+           median: q(0.5), min: ok[0], max: ok[ok.length - 1], p90: q(0.9) };
+}
+const ms = (x) => Math.round(x);
+
+function renderDests(state) {
+  const scaleMax = Math.max(300, ...state.map((d) => (stats(d.samples) || {}).median || 0));
+  $("dests").innerHTML = "";
+  for (const d of state) {
+    const s = stats(d.samples);
+    const el = document.createElement("div");
+    el.className = "dest";
+    const shown = s ? (d.fresh ? s.median / 3 : s.median) : 0;
+    const median = s ? (d.fresh ? "≈ " : "") + ms(shown) + " ms" : (d.samples.length ? "sin respuesta" : "…");
+    const lost = d.samples.length - (s ? s.n : 0);
+    const sub = s ? `media ${ms(s.mean)} · rango ${ms(s.min)}–${ms(s.max)} · perdidos ${lost}/${d.samples.length}` +
+                    (d.first != null ? ` · primera conexión ${ms(d.first)} ms` : "")
+                  : (d.first === null ? "la primera conexión falló" : "");
+    const subText = s && d.fresh ? `medido ${ms(s.median)} ms con conexión nueva en cada muestra (3 idas y vueltas) · ` + sub : sub;
+    const w = s ? Math.min(100, (shown / scaleMax) * 100) : 0;
+    const cls = !s ? "" : shown < 100 ? "" : shown < 200 ? "warn" : "bad";
+    el.innerHTML = `<span class="name"></span><span class="val"></span><div class="bar"><div class="${cls}" style="width:${w}%"></div></div><span class="sub"></span>`;
+    el.querySelector(".name").textContent = d.name;
+    el.querySelector(".val").textContent = median;
+    el.querySelector(".sub").textContent = subText;
+    $("dests").appendChild(el);
+  }
+}
+
+function vetNow() {
+  return new Date().toLocaleString("es-VE", { timeZone: "America/Caracas", dateStyle: "short", timeStyle: "short" });
+}
+
+function buildReport(state, meta) {
+  const lines = [];
+  lines.push("Medición de latencia (teléfono, datos móviles)");
+  lines.push(`Inicio ${meta.start} · fin ${meta.end} (hora de Venezuela)`);
+  lines.push(`Operadora: ${meta.carrier}` + (meta.place ? ` · lugar: ${meta.place}` : ""));
+  lines.push(`Red según el teléfono: ${meta.net}`);
+  lines.push(`Muestras por destino: ${ROUNDS} (mediana / media / rango / perdidos / primera conexión, en ms)`);
+  lines.push("* Con Hetzner el navegador abre una conexión nueva en cada muestra (3 idas y vueltas). Entre paréntesis, la mediana ÷ 3.");
+  lines.push("");
+  for (const d of state) {
+    const s = stats(d.samples);
+    if (!s) { lines.push(`${d.name}: sin respuesta (${d.samples.length} intentos)`); continue; }
+    lines.push(`${d.name}${d.fresh ? " *" : ""}: ${ms(s.median)} / ${ms(s.mean)} / ${ms(s.min)}–${ms(s.max)} / ${s.lost}/${d.samples.length} / ${d.first != null ? ms(d.first) : "falló"}` + (d.fresh ? ` (≈ ${ms(s.median / 3)})` : ""));
+  }
+  lines.push("");
+  lines.push(`Teléfono: ${navigator.userAgent}`);
+  return lines.join("\n");
+}
+
+let wakeLock = null;
+async function keepAwake() {
+  try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) { wakeLock = null; }
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && running) keepAwake(); });
+
+let running = false;
+let paused = 0;
+document.addEventListener("visibilitychange", () => { if (running && document.visibilityState === "hidden") paused++; });
+
+async function run() {
+  running = true; paused = 0;
+  $("setup").hidden = true; $("result").hidden = true; $("run").hidden = false;
+  await keepAwake();
+  const meta = { start: vetNow(), carrier: $("carrier").value, place: $("place").value.trim(),
+                 net: conn ? [conn.type, conn.effectiveType].filter(Boolean).join(" / ") || "no informa" : "no informa" };
+  const state = DESTS.map((d) => ({ ...d, first: undefined, samples: [] }));
+  renderDests(state);
+  const total = DESTS.length * (ROUNDS + 1);
+  let doneCount = 0;
+  const tick = (what) => {
+    doneCount++;
+    $("progressBar").style.width = (doneCount / total * 100) + "%";
+    $("statusSub").textContent = what;
+  };
+  // 1) la primera conexión a cada destino (incluye abrir la conexión segura)
+  for (const d of state) { $("statusText").textContent = "Conectando…"; d.first = await probe(d.url, d.plain); tick(d.name); renderDests(state); }
+  // 2) rondas: una petición a cada destino por ronda, para repartir los cambios de la red entre todos por igual
+  for (let r = 1; r <= ROUNDS; r++) {
+    $("statusText").textContent = `Midiendo: ronda ${r} de ${ROUNDS}`;
+    for (const d of state) { d.samples.push(await probe(d.url, d.plain)); tick(d.name); }
+    renderDests(state);
+  }
+  meta.end = vetNow();
+  running = false;
+  try { if (wakeLock) await wakeLock.release(); } catch (e) {}
+  let report = buildReport(state, meta);
+  if (paused) report += `\nAviso: la página pasó ${paused} vez/veces a segundo plano durante la medición.`;
+  $("report").textContent = report;
+  $("statusText").textContent = "Medición terminada";
+  $("statusSub").textContent = "";
+  $("result").hidden = false;
+  $("result").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+$("start").addEventListener("click", () => { if (!running) run(); });
+$("again").addEventListener("click", () => { $("result").hidden = true; $("run").hidden = true; $("setup").hidden = false; window.scrollTo(0, 0); });
+$("share").addEventListener("click", async () => {
+  const text = $("report").textContent;
+  if (navigator.share) {
+    try { await navigator.share({ text }); return; } catch (e) { if (e && e.name === "AbortError") return; }
+  }
+  location.href = "https://wa.me/?text=" + encodeURIComponent(text);
+});
+$("copy").addEventListener("click", async () => {
+  const text = $("report").textContent;
+  try { await navigator.clipboard.writeText(text); }
+  catch (e) {
+    const range = document.createRange(); range.selectNodeContents($("report"));
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    try { document.execCommand("copy"); } catch (e2) {}
+  }
+  $("copied").hidden = false;
+});
+</script>
+</body>
+</html>
